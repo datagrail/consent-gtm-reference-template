@@ -14,6 +14,7 @@ ___INFO___
   "version": 1,
   "securityGroups": [],
   "displayName": "DataGrail Consent - Gallery Template",
+  "categories": ["PERSONALIZATION", "TAG_MANAGEMENT"],
   "brand": {
     "id": "brand_dummy",
     "displayName": "DataGrail",
