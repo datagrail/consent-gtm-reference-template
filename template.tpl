@@ -76,6 +76,7 @@ const injectScript = require('injectScript');
 const setDefaultConsentState = require('setDefaultConsentState');
 const updateConsentState = require('updateConsentState');
 const getContainerVersion = require('getContainerVersion');
+const encodeUri = require('encodeUri');
 const log = require('logToConsole');
 
 const COOKIE_PREFERENCES_KEY = 'datagrail_consent_preferences';
@@ -83,7 +84,7 @@ const COOKIE_CONSENT_VERSION = 'datagrail_consent_version';
 
 const customerUUID = data.CustomerUUID;
 const containerUUID = data.ContainerUUID;
-const scriptURL = "https://api.consentjs.datagrail.io/" + customerUUID + "/" + containerUUID + "/consent-loader.js";
+const scriptURL = "https://api.consentjs.datagrail.io/" + encodeUri(customerUUID) + "/" + encodeUri(containerUUID) + "/consent-loader.js";
 
 
 const gtagSet = require('gtagSet');
