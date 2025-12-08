@@ -98,7 +98,7 @@ if (customerDomains && customerDomains.length >= 1) {
   if (-1 === (data.AllowedHosts || '').split(';').indexOf(getUrl('host'))) return;
 }
 
-const defaultData = {"ad_storage":"granted","ad_user_data":"granted","ad_personalization":"granted","analytics_storage":"granted","functionality_storage":"granted","personalization_storage":"granted","security_storage":"granted"};
+const defaultData = {"ad_storage":"denied","ad_user_data":"denied","ad_personalization":"denied","analytics_storage":"denied","functionality_storage":"denied","personalization_storage":"denied","security_storage":"denied"};
 
 const matching_consent_version = function() {
   const cv = getContainerVersion();
