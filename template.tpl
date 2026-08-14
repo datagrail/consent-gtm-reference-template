@@ -80,7 +80,6 @@ const encodeUri = require('encodeUri');
 const log = require('logToConsole');
 
 const COOKIE_PREFERENCES_KEY = 'datagrail_consent_preferences';
-const COOKIE_CONSENT_VERSION = 'datagrail_consent_version';
 
 const customerUUID = data.CustomerUUID;
 const containerUUID = data.ContainerUUID;
@@ -100,19 +99,16 @@ if (customerDomains && customerDomains.length >= 1) {
 
 const defaultData = {"ad_storage":"denied","ad_user_data":"denied","ad_personalization":"denied","analytics_storage":"denied","functionality_storage":"denied","personalization_storage":"denied","security_storage":"denied"};
 
-const matching_consent_version = function() {
+// A template generated from your DataGrail environment is given a consent
+// version to validate the stored consent cookie against. This reference
+// template has none, so stored consent is only trusted in preview mode.
+const in_preview_mode = function() {
   const cv = getContainerVersion();
   if (cv.previewMode) {
-    log('consent: preview mode enabled, matching consent version automatically.');
-    return true; // always match in preview mode
-  } else {
-    const consent_version = getCookieValues(COOKIE_CONSENT_VERSION);
-    const has_consent_version = '' + consent_version != '';
-    if (!has_consent_version) {
-      return false; // no consent version cookie found
-    }
-    return data.ConsentVersion == consent_version[0];
+    log('consent: preview mode enabled, honoring stored consent automatically.');
+    return true;
   }
+  return false;
 };
 const cookie_string = getCookieValues(COOKIE_PREFERENCES_KEY);
 
@@ -221,11 +217,11 @@ if (has_GPC) {
 } else if (has_DNT) {
   log('consent: honoring DNT signal');
   gpc_defaults();
-} else if (matching_consent_version() && has_cookie) {
+} else if (in_preview_mode() && has_cookie) {
   log('consent: honoring consent cookie');
   handle_cookie();
 } else {
-  log('consent: versions do not match or cookie missing');
+  log('consent: no trusted consent cookie, applying defaults');
   region_defaults();
 }
 setInWindow('DG_CONSENT_UPDATE', updateState);
