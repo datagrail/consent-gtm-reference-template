@@ -80,7 +80,6 @@ const encodeUri = require('encodeUri');
 const log = require('logToConsole');
 
 const COOKIE_PREFERENCES_KEY = 'datagrail_consent_preferences';
-const COOKIE_CONSENT_VERSION = 'datagrail_consent_version';
 
 const customerUUID = data.CustomerUUID;
 const containerUUID = data.ContainerUUID;
@@ -100,19 +99,16 @@ if (customerDomains && customerDomains.length >= 1) {
 
 const defaultData = {"ad_storage":"denied","ad_user_data":"denied","ad_personalization":"denied","analytics_storage":"denied","functionality_storage":"denied","personalization_storage":"denied","security_storage":"denied"};
 
-const matching_consent_version = function() {
+// A template generated from your DataGrail environment is given a consent
+// version to validate the stored consent cookie against. This reference
+// template has none, so stored consent is only trusted in preview mode.
+const in_preview_mode = function() {
   const cv = getContainerVersion();
   if (cv.previewMode) {
-    log('consent: preview mode enabled, matching consent version automatically.');
-    return true; // always match in preview mode
-  } else {
-    const consent_version = getCookieValues(COOKIE_CONSENT_VERSION);
-    const has_consent_version = '' + consent_version != '';
-    if (!has_consent_version) {
-      return false; // no consent version cookie found
-    }
-    return data.ConsentVersion == consent_version[0];
+    log('consent: preview mode enabled, honoring stored consent automatically.');
+    return true;
   }
+  return false;
 };
 const cookie_string = getCookieValues(COOKIE_PREFERENCES_KEY);
 
@@ -221,11 +217,11 @@ if (has_GPC) {
 } else if (has_DNT) {
   log('consent: honoring DNT signal');
   gpc_defaults();
-} else if (matching_consent_version() && has_cookie) {
+} else if (in_preview_mode() && has_cookie) {
   log('consent: honoring consent cookie');
   handle_cookie();
 } else {
-  log('consent: versions do not match or cookie missing');
+  log('consent: no trusted consent cookie, applying defaults');
   region_defaults();
 }
 setInWindow('DG_CONSENT_UPDATE', updateState);
@@ -849,7 +845,302 @@ ___WEB_PERMISSIONS___
 
 ___TESTS___
 
-scenarios: []
+scenarios:
+- name: Injects the DataGrail consent loader for the configured UUIDs
+  code: |-
+    runCode(mockData);
+
+    assertThat(injectedUrl).isEqualTo(LOADER_URL);
+    assertThat(gtagValues['developer_id.dZml0Zj']).isTrue();
+    assertApi('gtmOnSuccess').wasCalled();
+- name: Encodes the UUIDs used to build the loader URL
+  code: |-
+    mockData.CustomerUUID = 'customer uuid';
+    mockData.ContainerUUID = 'container uuid';
+
+    runCode(mockData);
+
+    assertThat(injectedUrl).isEqualTo('https://api.consentjs.datagrail.io/customer%20uuid/container%20uuid/consent-loader.js');
+- name: Signals gtmOnFailure when the consent loader cannot be injected
+  code: |-
+    mock('injectScript', function(url, onSuccess, onFailure) {
+      onFailure();
+    });
+
+    runCode(mockData);
+
+    assertApi('gtmOnFailure').wasCalled();
+    assertApi('gtmOnSuccess').wasNotCalled();
+- name: Exposes the consent update callback and blocks loader reloads
+  code: |-
+    runCode(mockData);
+
+    assertThat(windowValues['DG_CONSENT_UPDATE']).isDefined();
+    assertThat(windowValues['DG_CONSENT_BLOCK_RELOAD']).isTrue();
+- name: Denies every consent type when no consent cookies are set
+  code: |-
+    runCode(mockData);
+
+    assertThat(defaultStates.length).isEqualTo(1);
+    assertThat(defaultStates[0]).isEqualTo(GPC_DEFAULTS);
+    assertThat(gtagValues['ads_data_redaction']).isTrue();
+
+    // The preferences cookie is the only cookie the template may read, so it
+    // must also be the only cookie it asks for.
+    assertThat(requestedCookies).isEqualTo([PREFERENCES_COOKIE]);
+- name: Ignores a stored consent cookie outside of preview mode
+  code: |-
+    cookies[PREFERENCES_COOKIE] = ['analytics_storage:1|dg-category-marketing:1'];
+
+    runCode(mockData);
+
+    // Without a consent version to validate against, stored consent is not
+    // trusted on a live page load and everything stays denied.
+    assertThat(defaultStates.length).isEqualTo(1);
+    assertThat(defaultStates[0]).isEqualTo(GPC_DEFAULTS);
+    assertThat(gtagValues['ads_data_redaction']).isTrue();
+- name: Honors the consent cookie in preview mode
+  code: |-
+    previewMode = true;
+    cookies[PREFERENCES_COOKIE] = ['analytics_storage:1|dg-category-marketing:1|ad_storage:0'];
+
+    runCode(mockData);
+
+    assertThat(defaultStates.length).isEqualTo(1);
+    assertThat(defaultStates[0]).isEqualTo(stateWith({
+      analytics_storage: 'granted',
+      'dg-category-marketing': 'granted'
+    }));
+    assertThat(gtagValues['ads_data_redaction']).isUndefined();
+- name: Treats an essential-only cookie like a GPC signal
+  code: |-
+    previewMode = true;
+    cookies[PREFERENCES_COOKIE] = ['dg-category-essential:1|dg-category-marketing:0|dg-category-performance:0'];
+
+    runCode(mockData);
+
+    assertThat(defaultStates[0]).isEqualTo(GPC_DEFAULTS);
+    assertThat(gtagValues['ads_data_redaction']).isTrue();
+- name: Ignores cookie categories that are not mapped to a consent type
+  code: |-
+    previewMode = true;
+    cookies[PREFERENCES_COOKIE] = ['dg-consent-category-ea8cf4:1|dg-consent-category-600500:1'];
+
+    runCode(mockData);
+
+    // Unmapped keys are dropped, so only the built-in consent types are
+    // written and each one stays denied. Note this is not GPC_DEFAULTS: the
+    // dg-category-* keys are absent because the cookie never named them.
+    assertThat(defaultStates[0]).isEqualTo(ALL_DENIED);
+- name: Writes no default consent state when Google Consent Mode is blocked
+  code: |-
+    mockData.blockConsentMode = true;
+
+    runCode(mockData);
+
+    assertThat(defaultStates.length).isEqualTo(0);
+    assertThat(gtagValues['ads_data_redaction']).isUndefined();
+    assertThat(injectedUrl).isEqualTo(LOADER_URL);
+    assertApi('gtmOnSuccess').wasCalled();
+- name: Writes no default consent state from a cookie when Consent Mode is blocked
+  code: |-
+    mockData.blockConsentMode = true;
+    previewMode = true;
+    cookies[PREFERENCES_COOKIE] = ['analytics_storage:1|dg-category-marketing:1'];
+
+    runCode(mockData);
+
+    assertThat(defaultStates.length).isEqualTo(0);
+    assertThat(gtagValues['ads_data_redaction']).isUndefined();
+- name: Honors a GPC signal over a stored consent cookie
+  code: |-
+    previewMode = true;
+    mockData.GPC = true;
+    cookies[PREFERENCES_COOKIE] = ['analytics_storage:1|dg-category-marketing:1'];
+
+    runCode(mockData);
+
+    assertThat(defaultStates[0]).isEqualTo(GPC_DEFAULTS);
+    assertThat(gtagValues['ads_data_redaction']).isTrue();
+- name: Honors a DNT signal over a stored consent cookie
+  code: |-
+    previewMode = true;
+    mockData.DNT = 1;
+    cookies[PREFERENCES_COOKIE] = ['analytics_storage:1|dg-category-marketing:1'];
+
+    runCode(mockData);
+
+    assertThat(defaultStates[0]).isEqualTo(GPC_DEFAULTS);
+    assertThat(gtagValues['ads_data_redaction']).isTrue();
+- name: Updates consent state when the visitor grants categories
+  code: |-
+    // Load with consent already granted so redaction is not already on from the
+    // page-load defaults, leaving the update as the only thing under test.
+    previewMode = true;
+    cookies[PREFERENCES_COOKIE] = ['analytics_storage:1|dg-category-marketing:1'];
+
+    runCode(mockData);
+
+    updateConsent([
+      {gtm_key: 'analytics_storage', isEnabled: true},
+      {gtm_key: 'dg-category-performance', isEnabled: true},
+      {gtm_key: 'ad_storage', isEnabled: false}
+    ]);
+
+    assertThat(updatedStates.length).isEqualTo(1);
+    assertThat(updatedStates[0]).isEqualTo(stateWith({
+      analytics_storage: 'granted',
+      'dg-category-performance': 'granted'
+    }));
+    assertThat(gtagValues['ads_data_redaction']).isUndefined();
+- name: Treats an essential-only update like a GPC signal
+  code: |-
+    // Load with consent granted, then narrow to essential-only, so redaction can
+    // only have been switched on by the update itself.
+    previewMode = true;
+    cookies[PREFERENCES_COOKIE] = ['analytics_storage:1|dg-category-marketing:1'];
+
+    runCode(mockData);
+
+    updateConsent([
+      {gtm_key: 'dg-category-essential', isEnabled: true},
+      {gtm_key: 'dg-category-marketing', isEnabled: false},
+      {gtm_key: 'analytics_storage', isEnabled: false}
+    ]);
+
+    assertThat(updatedStates.length).isEqualTo(1);
+    assertThat(updatedStates[0]).isEqualTo(GPC_DEFAULTS);
+    assertThat(gtagValues['ads_data_redaction']).isTrue();
+- name: Ignores update keys that are not mapped to a consent type
+  code: |-
+    runCode(mockData);
+
+    updateConsent([
+      {gtm_key: 'dg-consent-category-ea8cf4', isEnabled: true},
+      {gtm_key: 'dg-consent-category-600500', isEnabled: true}
+    ]);
+
+    assertThat(updatedStates[0]).isEqualTo(ALL_DENIED);
+- name: Writes no consent update when Google Consent Mode is blocked
+  code: |-
+    mockData.blockConsentMode = true;
+
+    runCode(mockData);
+
+    updateConsent([
+      {gtm_key: 'analytics_storage', isEnabled: true},
+      {gtm_key: 'dg-category-marketing', isEnabled: true}
+    ]);
+
+    assertThat(updatedStates.length).isEqualTo(0);
+    assertThat(gtagValues['ads_data_redaction']).isUndefined();
+setup: |-
+  const CUSTOMER_UUID = '11111111-2222-3333-4444-555555555555';
+  const CONTAINER_UUID = '66666666-7777-8888-9999-aaaaaaaaaaaa';
+  const LOADER_URL = 'https://api.consentjs.datagrail.io/' + CUSTOMER_UUID + '/' + CONTAINER_UUID + '/consent-loader.js';
+
+  const PREFERENCES_COOKIE = 'datagrail_consent_preferences';
+
+  // Every consent type the template can write, all denied. buildConsentSettings()
+  // starts from this before applying the categories it reads from the cookie.
+  const ALL_DENIED = {
+    ad_storage: 'denied',
+    ad_user_data: 'denied',
+    ad_personalization: 'denied',
+    analytics_storage: 'denied',
+    functionality_storage: 'denied',
+    personalization_storage: 'denied',
+    security_storage: 'denied'
+  };
+
+  // The state the template falls back to for a GPC/DNT signal, an essential-only
+  // choice, and any page load where stored consent cannot be trusted.
+  const GPC_DEFAULTS = {
+    ad_storage: 'denied',
+    ad_user_data: 'denied',
+    ad_personalization: 'denied',
+    analytics_storage: 'denied',
+    functionality_storage: 'denied',
+    personalization_storage: 'denied',
+    security_storage: 'denied',
+    'dg-category-essential': 'granted',
+    'dg-category-marketing': 'denied',
+    'dg-category-performance': 'denied',
+    'dg-category-functional': 'denied'
+  };
+
+  const mockData = {
+    CustomerUUID: CUSTOMER_UUID,
+    ContainerUUID: CONTAINER_UUID,
+    blockConsentMode: false
+  };
+
+  // Inputs scenarios change before calling runCode().
+  let previewMode = false;
+  const cookies = {};
+
+  // Output captured from the template.
+  const defaultStates = [];
+  const updatedStates = [];
+  const requestedCookies = [];
+  const gtagValues = {};
+  const windowValues = {};
+  let injectedUrl;
+
+  mock('getContainerVersion', function() {
+    return {
+      containerId: 'GTM-CONSENT',
+      debugMode: previewMode,
+      previewMode: previewMode,
+      environmentName: '',
+      environmentMode: false,
+      version: '1'
+    };
+  });
+
+  mock('getCookieValues', function(name) {
+    requestedCookies.push(name);
+    return cookies[name] || [];
+  });
+
+  mock('setDefaultConsentState', function(settings) {
+    defaultStates.push(settings);
+  });
+
+  mock('updateConsentState', function(settings) {
+    updatedStates.push(settings);
+  });
+
+  mock('gtagSet', function(key, value) {
+    gtagValues[key] = value;
+  });
+
+  mock('setInWindow', function(key, value) {
+    windowValues[key] = value;
+  });
+
+  mock('injectScript', function(url, onSuccess) {
+    injectedUrl = url;
+    onSuccess();
+  });
+
+  // Expected consent state: every type denied, then the given grants applied.
+  function stateWith(overrides) {
+    const settings = {};
+    for (const key in ALL_DENIED) {
+      settings[key] = ALL_DENIED[key];
+    }
+    for (const key in overrides) {
+      settings[key] = overrides[key];
+    }
+    return settings;
+  }
+
+  // Calls the window.DG_CONSENT_UPDATE callback the template publishes, which is
+  // how the consent loader reports a visitor's choices back to the tag.
+  function updateConsent(cookieOptions) {
+    windowValues['DG_CONSENT_UPDATE']({cookieOptions: cookieOptions});
+  }
 
 
 ___NOTES___
