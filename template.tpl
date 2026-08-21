@@ -68,7 +68,7 @@ ___TEMPLATE_PARAMETERS___
     "type": "TEXT",
     "name": "Region",
     "displayName": "Region",
-    "help": "Optional. Comma-separated list of ISO 3166-2 region codes (for example <code>US-CA, ES</code>) that the default consent state should apply to. Leave blank to apply the defaults to all regions.",
+    "help": "Optional. Comma-separated list of region codes — ISO 3166-1 country codes and/or ISO 3166-2 subdivision codes (for example <code>ES, US-CA</code>) — that the default consent state should apply to. Leave blank to apply the defaults to all regions.",
     "simpleValueType": true,
     "valueValidators": []
   }
@@ -97,8 +97,8 @@ const scriptURL = "https://api.consentjs.datagrail.io/" + encodeUri(customerUUID
 const gtagSet = require('gtagSet');
 gtagSet('developer_id.dZmI0Zj', true);
 
-// Optional ISO 3166-2 region codes the default consent state applies to. When
-// empty, the default state applies to every region.
+// Optional region codes (ISO 3166-1 country and/or ISO 3166-2 subdivision) the
+// default consent state applies to. When empty, it applies to every region.
 const regionCodes = [];
 if (data.Region) {
   const rawRegions = data.Region.split(',');
