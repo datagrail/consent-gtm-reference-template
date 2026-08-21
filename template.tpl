@@ -95,7 +95,7 @@ const scriptURL = "https://api.consentjs.datagrail.io/" + encodeUri(customerUUID
 
 
 const gtagSet = require('gtagSet');
-gtagSet('developer_id.dZml0Zj', true);
+gtagSet('developer_id.dZmI0Zj', true);
 
 // Optional ISO 3166-2 region codes the default consent state applies to. When
 // empty, the default state applies to every region.
@@ -887,7 +887,7 @@ scenarios:
     runCode(mockData);
 
     assertThat(injectedUrl).isEqualTo(LOADER_URL);
-    assertThat(gtagValues['developer_id.dZml0Zj']).isTrue();
+    assertThat(gtagValues['developer_id.dZmI0Zj']).isTrue();
     assertApi('gtmOnSuccess').wasCalled();
 - name: Encodes the UUIDs used to build the loader URL
   code: |-
