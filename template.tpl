@@ -63,6 +63,14 @@ ___TEMPLATE_PARAMETERS___
     "name": "blockConsentMode",
     "checkboxText": "Block Google Consent Mode",
     "simpleValueType": true
+  },
+  {
+    "type": "TEXT",
+    "name": "Region",
+    "displayName": "Region",
+    "help": "Optional. Comma-separated list of ISO 3166-2 region codes (for example <code>US-CA, ES</code>) that the default consent state should apply to. Leave blank to apply the defaults to all regions.",
+    "simpleValueType": true,
+    "valueValidators": []
   }
 ]
 
@@ -88,6 +96,17 @@ const scriptURL = "https://api.consentjs.datagrail.io/" + encodeUri(customerUUID
 
 const gtagSet = require('gtagSet');
 gtagSet('developer_id.dZml0Zj', true);
+
+// Optional ISO 3166-2 region codes the default consent state applies to. When
+// empty, the default state applies to every region.
+const regionCodes = [];
+if (data.Region) {
+  const rawRegions = data.Region.split(',');
+  for (const raw of rawRegions) {
+    const trimmed = raw.trim();
+    if (trimmed !== '') { regionCodes.push(trimmed); }
+  }
+}
 
 const customerDomains = [];
 const gpcDefaultSettings = {"ad_storage":"denied","ad_user_data":"denied","ad_personalization":"denied","analytics_storage":"denied","functionality_storage":"denied","personalization_storage":"denied","security_storage":"denied","dg-category-essential":"granted","dg-category-marketing":"denied","dg-category-performance":"denied","dg-category-functional":"denied"};
@@ -134,7 +153,7 @@ function handle_cookie() {
   }
   if (!data.blockConsentMode) {
     if (enabled_count > 1) {
-      setDefaultConsentState(buildConsentSettings(enabled_categories));
+      apply_default_consent(buildConsentSettings(enabled_categories));
     } else {
        log('consent: treating essential_only like GPC');
       gpc_defaults();
@@ -198,10 +217,27 @@ function buildConsentSettings(categories) {
   return settings;
 }
 
+// Writes the default consent state, scoping it to the configured region codes
+// when any are set. Clones the settings so the shared gpcDefaultSettings object
+// is never tagged with a region (updateConsentState reuses it and takes no
+// region).
+function apply_default_consent(settings) {
+  var withRegion = {};
+  for (const key in settings) {
+    withRegion[key] = settings[key];
+  }
+  if (regionCodes.length > 0) {
+    // Scope the default state to the configured regions, per
+    // https://developers.google.com/tag-platform/tag-manager/templates/consent-apis
+    withRegion['region'] = regionCodes;
+  }
+  setDefaultConsentState(withRegion);
+}
+
 function gpc_defaults() {
   if (!data.blockConsentMode) {
     gtagSet('ads_data_redaction', true);
-    setDefaultConsentState(gpcDefaultSettings);
+    apply_default_consent(gpcDefaultSettings);
   } else {
     log('consent mode is blocked');
   }
@@ -972,6 +1008,63 @@ scenarios:
 
     assertThat(defaultStates[0]).isEqualTo(GPC_DEFAULTS);
     assertThat(gtagValues['ads_data_redaction']).isTrue();
+- name: Scopes the default consent state to the configured region codes
+  code: |-
+    mockData.Region = 'US-CA, ES';
+
+    runCode(mockData);
+
+    // The region is the only addition; every consent type is still denied.
+    assertThat(defaultStates.length).isEqualTo(1);
+    assertThat(defaultStates[0]).isEqualTo(stateWith({
+      'dg-category-essential': 'granted',
+      'dg-category-marketing': 'denied',
+      'dg-category-performance': 'denied',
+      'dg-category-functional': 'denied',
+      region: ['US-CA', 'ES']
+    }));
+- name: Applies the region to a cookie-derived default consent state
+  code: |-
+    previewMode = true;
+    mockData.Region = 'US-CA';
+    cookies[PREFERENCES_COOKIE] = ['analytics_storage:1|dg-category-marketing:1|ad_storage:0'];
+
+    runCode(mockData);
+
+    assertThat(defaultStates[0]).isEqualTo(stateWith({
+      analytics_storage: 'granted',
+      'dg-category-marketing': 'granted',
+      region: ['US-CA']
+    }));
+- name: Ignores blank and whitespace-only region entries
+  code: |-
+    mockData.Region = ' , US-CA ,, ';
+
+    runCode(mockData);
+
+    assertThat(defaultStates[0].region).isEqualTo(['US-CA']);
+- name: Writes no region when none is configured
+  code: |-
+    runCode(mockData);
+
+    assertThat(defaultStates[0].region).isUndefined();
+- name: Does not scope consent updates by region
+  code: |-
+    // The region only applies to the default consent state; updateConsentState
+    // takes no region, and the shared defaults object must not be tagged with one.
+    previewMode = true;
+    mockData.Region = 'US-CA';
+    cookies[PREFERENCES_COOKIE] = ['analytics_storage:1|dg-category-marketing:1'];
+
+    runCode(mockData);
+
+    updateConsent([
+      {gtm_key: 'analytics_storage', isEnabled: true},
+      {gtm_key: 'dg-category-performance', isEnabled: true}
+    ]);
+
+    assertThat(updatedStates.length).isEqualTo(1);
+    assertThat(updatedStates[0].region).isUndefined();
 - name: Updates consent state when the visitor grants categories
   code: |-
     // Load with consent already granted so redaction is not already on from the
