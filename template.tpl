@@ -231,6 +231,10 @@ function apply_default_consent(settings) {
     // https://developers.google.com/tag-platform/tag-manager/templates/consent-apis
     withRegion['region'] = regionCodes;
   }
+  // Give the consent loader up to 500ms to report the visitor's stored choices
+  // before tags fall back to the denied defaults, per
+  // https://developers.google.com/tag-platform/tag-manager/templates/consent-apis
+  withRegion['wait_for_update'] = 500;
   setDefaultConsentState(withRegion);
 }
 
@@ -918,7 +922,7 @@ scenarios:
     runCode(mockData);
 
     assertThat(defaultStates.length).isEqualTo(1);
-    assertThat(defaultStates[0]).isEqualTo(GPC_DEFAULTS);
+    assertThat(defaultStates[0]).isEqualTo(defaultState(GPC_DEFAULTS));
     assertThat(gtagValues['ads_data_redaction']).isTrue();
 
     // The preferences cookie is the only cookie the template may read, so it
@@ -933,7 +937,7 @@ scenarios:
     // Without a consent version to validate against, stored consent is not
     // trusted on a live page load and everything stays denied.
     assertThat(defaultStates.length).isEqualTo(1);
-    assertThat(defaultStates[0]).isEqualTo(GPC_DEFAULTS);
+    assertThat(defaultStates[0]).isEqualTo(defaultState(GPC_DEFAULTS));
     assertThat(gtagValues['ads_data_redaction']).isTrue();
 - name: Honors the consent cookie in preview mode
   code: |-
@@ -943,10 +947,10 @@ scenarios:
     runCode(mockData);
 
     assertThat(defaultStates.length).isEqualTo(1);
-    assertThat(defaultStates[0]).isEqualTo(stateWith({
+    assertThat(defaultStates[0]).isEqualTo(defaultState(stateWith({
       analytics_storage: 'granted',
       'dg-category-marketing': 'granted'
-    }));
+    })));
     assertThat(gtagValues['ads_data_redaction']).isUndefined();
 - name: Treats an essential-only cookie like a GPC signal
   code: |-
@@ -955,7 +959,7 @@ scenarios:
 
     runCode(mockData);
 
-    assertThat(defaultStates[0]).isEqualTo(GPC_DEFAULTS);
+    assertThat(defaultStates[0]).isEqualTo(defaultState(GPC_DEFAULTS));
     assertThat(gtagValues['ads_data_redaction']).isTrue();
 - name: Ignores cookie categories that are not mapped to a consent type
   code: |-
@@ -967,7 +971,7 @@ scenarios:
     // Unmapped keys are dropped, so only the built-in consent types are
     // written and each one stays denied. Note this is not GPC_DEFAULTS: the
     // dg-category-* keys are absent because the cookie never named them.
-    assertThat(defaultStates[0]).isEqualTo(ALL_DENIED);
+    assertThat(defaultStates[0]).isEqualTo(defaultState(ALL_DENIED));
 - name: Writes no default consent state when Google Consent Mode is blocked
   code: |-
     mockData.blockConsentMode = true;
@@ -996,7 +1000,7 @@ scenarios:
 
     runCode(mockData);
 
-    assertThat(defaultStates[0]).isEqualTo(GPC_DEFAULTS);
+    assertThat(defaultStates[0]).isEqualTo(defaultState(GPC_DEFAULTS));
     assertThat(gtagValues['ads_data_redaction']).isTrue();
 - name: Honors a DNT signal over a stored consent cookie
   code: |-
@@ -1006,7 +1010,7 @@ scenarios:
 
     runCode(mockData);
 
-    assertThat(defaultStates[0]).isEqualTo(GPC_DEFAULTS);
+    assertThat(defaultStates[0]).isEqualTo(defaultState(GPC_DEFAULTS));
     assertThat(gtagValues['ads_data_redaction']).isTrue();
 - name: Scopes the default consent state to the configured region codes
   code: |-
@@ -1016,13 +1020,13 @@ scenarios:
 
     // The region is the only addition; every consent type is still denied.
     assertThat(defaultStates.length).isEqualTo(1);
-    assertThat(defaultStates[0]).isEqualTo(stateWith({
+    assertThat(defaultStates[0]).isEqualTo(defaultState(stateWith({
       'dg-category-essential': 'granted',
       'dg-category-marketing': 'denied',
       'dg-category-performance': 'denied',
       'dg-category-functional': 'denied',
       region: ['US-CA', 'ES']
-    }));
+    })));
 - name: Applies the region to a cookie-derived default consent state
   code: |-
     previewMode = true;
@@ -1031,11 +1035,11 @@ scenarios:
 
     runCode(mockData);
 
-    assertThat(defaultStates[0]).isEqualTo(stateWith({
+    assertThat(defaultStates[0]).isEqualTo(defaultState(stateWith({
       analytics_storage: 'granted',
       'dg-category-marketing': 'granted',
       region: ['US-CA']
-    }));
+    })));
 - name: Ignores blank and whitespace-only region entries
   code: |-
     mockData.Region = ' , US-CA ,, ';
@@ -1048,6 +1052,11 @@ scenarios:
     runCode(mockData);
 
     assertThat(defaultStates[0].region).isUndefined();
+- name: Waits for a consent update before falling back to the defaults
+  code: |-
+    runCode(mockData);
+
+    assertThat(defaultStates[0].wait_for_update).isEqualTo(500);
 - name: Does not scope consent updates by region
   code: |-
     // The region only applies to the default consent state; updateConsentState
@@ -1216,6 +1225,18 @@ setup: |-
     injectedUrl = url;
     onSuccess();
   });
+
+  // Expected default consent state: the given settings plus wait_for_update,
+  // which the template attaches to every setDefaultConsentState call (but not
+  // to updateConsentState).
+  function defaultState(settings) {
+    const withWait = {};
+    for (const key in settings) {
+      withWait[key] = settings[key];
+    }
+    withWait.wait_for_update = 500;
+    return withWait;
+  }
 
   // Expected consent state: every type denied, then the given grants applied.
   function stateWith(overrides) {
