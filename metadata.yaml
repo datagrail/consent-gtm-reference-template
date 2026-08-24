@@ -15,5 +15,5 @@
 homepage: "https://www.datagrail.io"
 documentation: "https://docs.datagrail.io/"
 versions:
-  - sha: 434db87f9c89ff9cec6e6880fb98dd4cd770b600
+  - sha: cb6b87ad58ff1ffa2258cc5a14865a6f251e81ba
     changeNotes: Initial Version
